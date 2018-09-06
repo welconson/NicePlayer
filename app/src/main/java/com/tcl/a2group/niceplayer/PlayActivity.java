@@ -9,6 +9,7 @@ import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.AudioManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -18,6 +19,8 @@ import android.os.Message;
 import android.provider.MediaStore;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -57,6 +60,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
     private TextView musicPlayedDuration, musicDuration, musicName, musicArtist;
     private ImageView musicCover, playButton, playModeButton;
     private SeekBar playSeekBar, volumeSeekBar;
+    private RecyclerView playListView;
     private boolean isPlayingBeforeAdjust = false;
     private boolean isAdjustingPlayer = false;
     private boolean isAdjustingVolume = false;
@@ -66,6 +70,8 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
 
     private MusicService musicService;
     private SimpleDateFormat durationFormat = new SimpleDateFormat("mm:ss");
+
+    // 绑定服务的连接类
     private ServiceConnection connection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -75,6 +81,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
             initPlay();
             musicService.setOnPlayCompletedListener(PlayActivity.this);
             volumeSeekBar.setMax(VOLUME_MAX);
+            //todo volumeSeekBar的显示控制
             volumeSeekBar.setVisibility(View.VISIBLE);
             if(audioManager != null){
                 int currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) * VOLUME_MAX
@@ -85,6 +92,10 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
                 volumeSeekBar.setProgress(VOLUME_MIDDLE);
                 musicService.setVolume(VOLUME_MIDDLE, VOLUME_MAX);
             }
+//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+//                playListView.setDefaultFocusHighlightEnabled(true);
+//            }
+//            Log.d(TAG, "onServiceConnected: recycler view has" + (playListView.requestFocus() ? "" : " not") + " got focused");
         }
 
         @Override
@@ -92,6 +103,9 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
             musicService = null;
         }
     };
+
+    // 主要用于处理长按操作，更新UI
+    // 大多数消息发送者本身运行在UI线程
     private Handler handler = new Handler(Looper.getMainLooper()){
         @Override
         public void handleMessage(Message msg) {
@@ -144,7 +158,9 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }
     };
 
+    // 按键次数统计，用于在触发onKeyUp回调时，判断是否为长按操作
     private int keyCount;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         context = this;
@@ -165,6 +181,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         musicCover = findViewById(R.id.music_cover);
         playButton = findViewById(R.id.playing_play);
         playModeButton = findViewById(R.id.playing_mode);
+        playListView = findViewById(R.id.play_list_view);
 
         playSeekBar.setFocusable(false);
         volumeSeekBar.setFocusable(false);
@@ -178,26 +195,12 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
             audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
         }
 
-        //todo 主动请求系统扫描新的音频文件
-        if(checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED){
-            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 0);
-            Log.d(TAG, "onCreate: request external read permission");
-        }else {
-            musicAttributeList = getMusicList();
-        }
+        musicAttributeList = getMusicList();
+        playListView.setLayoutManager(new LinearLayoutManager(this));
+        playListView.setAdapter(new PlayListAdapter(musicAttributeList, this));
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        if(requestCode == 0 && permissions.length > 0){
-            if(grantResults[0] == PackageManager.PERMISSION_GRANTED){
-                Toast.makeText(this, "read permission granted", Toast.LENGTH_SHORT).show();
-                musicAttributeList = getMusicList();
-                //todo 请求权限后续处理，传递音乐列表给播放服务
-            }
-        }
-    }
-
+    // 按键按下时的处理，按键按下次数统计，达到阈值则触发长按响应
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         Log.d(TAG, "onKeyDown: down keyCount: " + event.getRepeatCount());
@@ -208,10 +211,19 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         return super.onKeyDown(keyCode, event);
     }
 
+    // 按键松开时的处理，判断是否需要取消长按处理
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         Log.d(TAG, "onKeyUp: up");
-        if(keyCount <= REPEAT_COUNT_THRESHOLD){
+        /*if(playListView.isFocused()){
+            // 列表获取焦点时的按键响应
+            Log.d(TAG, "onKeyUp: playListView is focused");
+            if(keyCode == KeyEvent.KEYCODE_DPAD_LEFT){
+                playListView.clearFocus();
+                playListView.setFocusable(false);
+            }
+        }
+        else */if(keyCount <= REPEAT_COUNT_THRESHOLD){
             onShortPress(keyCode);
             keyCount = 0;
         }else {
@@ -229,6 +241,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         return true;
     }
 
+    // 长按处理
     private void onLongPress(int keyCode){
         Log.d(TAG, "onLongPress: long press");
         switch (keyCode){
@@ -263,6 +276,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }
     }
 
+    // 短按处理
     private void onShortPress(int keyCode){
         Log.d(TAG, "onShortPress: short press");
         switch (keyCode){
@@ -308,6 +322,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }
     }
 
+    // 快进处理
     private void playForward(){
         if(isAdjustingPlayer)
             return;
@@ -319,6 +334,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         handler.sendEmptyMessage(MSG_FORWARD);
     }
 
+    // 快退处理
     private void playBackward(){
         if(isAdjustingPlayer)
             return;
@@ -330,6 +346,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         handler.sendEmptyMessage(MSG_BACKWARD);
     }
 
+    // 获取歌曲列表
     private List<MusicAttribute> getMusicList(){
         Cursor cursor = getContentResolver().query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, null, null, null, MediaStore.Audio.Media.DEFAULT_SORT_ORDER);
         List<MusicAttribute> musicAttributes = new ArrayList<>();
@@ -352,6 +369,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         return musicAttributes;
     }
 
+    // 初始播放
     private void initPlay(){
         musicService.initPlay();
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
@@ -362,28 +380,33 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         handler.sendMessage(message);
     }
 
+    // 暂停播放，同时更新UI
     private void pause(){
         musicService.pause();
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_play));
     }
 
+    // 开始播放，同时更新UI
     private void start(){
         musicService.start();
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
     }
 
+    // 播放下一首，同时更新UI
     private void skipToNextSong(){
         int index = musicService.skipToNextSong();
         updateSongInfoUI(index);
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
     }
 
+    // 播放上一首，同时更新UI
     private void rollbackToPreviousSong(){
         int index = musicService.rollbackToPreviousSong();
         updateSongInfoUI(index);
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
     }
 
+    // 设置播放模式，同时更新UI
     private void setPlayModeDrawable(int playMode){
         switch (playMode){
             case MusicService.LINE:{
@@ -405,6 +428,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }
     }
 
+    // 更新UI上的播放歌曲信息
     public void updateSongInfoUI(int songIndex){
         handler.removeMessages(MSG_UPDATE_SEEK_BAR);
         playSeekBar.setProgress(0);
@@ -426,6 +450,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         handler.sendMessage(message);
     }
 
+    // 歌曲信息
     public class MusicAttribute{
         String path;
         String name;

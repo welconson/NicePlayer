@@ -205,16 +205,24 @@ public class MusicService extends Service {
 //        }
 //    }
 
+    // 切换到下一首
     public int skipToNextSong(){
-        return moveToNextSong();
+        int index = getNextSongIndex();
+        if(index == INDEX_END){
+            index = 0;
+        }
+        playMusic(index);
+        return index;
     }
 
+    // 切换到上一首
     public int rollbackToPreviousSong(){
         int index = getPreviousSongIndex();
         playMusic(index);
         return index;
     }
 
+    // 自动播放下一首
     public int moveToNextSong(){
         int index = getNextSongIndex();
         playMusic(index);
@@ -237,6 +245,11 @@ public class MusicService extends Service {
             case LINE:{
                 index = currIndex + 1;
                 index = index >= musicAttributeList.size() ? INDEX_END : index;
+                break;
+            }
+            case RADOM:{
+                Random random = new Random();
+                index = random.nextInt(musicAttributeList.size());
                 break;
             }
         }
