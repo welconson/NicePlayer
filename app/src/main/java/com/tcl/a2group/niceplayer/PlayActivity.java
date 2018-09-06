@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -20,6 +21,7 @@ import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.View;
 import android.widget.ImageView;
 import android.widget.RelativeLayout;
 import android.widget.SeekBar;
@@ -38,21 +40,29 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
     private final static int MSG_BACKWARD = 11;
     private final static int MSG_UPDATE_SEEK_BAR = 1;
     private final static int MSG_UPDATE_SONG_INFO = 2;
+    private final static int MSG_RAISE_VOLUME = 3;
+    private final static int MSG_LOWER_VOLUME = 4;
 
     private final static int MILLIS_PER_SECOND = 1000;
-    private final static int TIME_ADJUST_UNIT = 10;
-    private final static int ADJUST_UNIT_MILLIS = 100;
+    private final static int TIME_ADJUST_UNIT = 1;
+    private final static int ADJUST_UNIT_MILLIS = 10;
+    private final static int VOLUME_MAX = 100;
+    private final static int VOLUME_MIDDLE = 50;
+    private final static int VOLUME_ADJUST_UNIT = 1;
 
 
     private Toolbar toolbar;
 //    private AlbumViewPager viewPager;
     private RelativeLayout lrcViewContainer;
     private TextView musicPlayedDuration, musicDuration, musicName, musicArtist;
-    private ImageView musicCover;
+    private ImageView musicCover, playButton, playModeButton;
     private SeekBar playSeekBar, volumeSeekBar;
     private boolean isPlayingBeforeAdjust = false;
-    private boolean isAdjusting = false;
+    private boolean isAdjustingPlayer = false;
+    private boolean isAdjustingVolume = false;
     private List<MusicAttribute> musicAttributeList;
+    private AudioManager audioManager;
+    private int playMode;
 
     private MusicService musicService;
     private SimpleDateFormat durationFormat = new SimpleDateFormat("mm:ss");
@@ -60,15 +70,21 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             musicService = ((MusicService.MyBinder) (service)).getService();
-            Log.d("musicService", musicService + "");
             musicService.setMusicAttributeList(musicAttributeList);
-            musicService.initPlay();
-            handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
-            Message message = handler.obtainMessage();
-            message.arg1 = 0;
-            message.what = MSG_UPDATE_SONG_INFO;
-            handler.sendMessage(message);
+            musicService.setPlayMode(playMode);
+            initPlay();
             musicService.setOnPlayCompletedListener(PlayActivity.this);
+            volumeSeekBar.setMax(VOLUME_MAX);
+            volumeSeekBar.setVisibility(View.VISIBLE);
+            if(audioManager != null){
+                int currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) * VOLUME_MAX
+                        / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                volumeSeekBar.setProgress(currentVolume);
+                musicService.setVolume(currentVolume, VOLUME_MAX);
+            }else {
+                volumeSeekBar.setProgress(VOLUME_MIDDLE);
+                musicService.setVolume(VOLUME_MIDDLE, VOLUME_MAX);
+            }
         }
 
         @Override
@@ -92,20 +108,37 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
                 }
                 case MSG_FORWARD: {
                     Log.d(TAG, "handleMessage: =====> msg forward");
-                    musicService.seekTo(musicService.getCurrentPosition() + MILLIS_PER_SECOND * TIME_ADJUST_UNIT);
-                    musicService.pause();
-                    playSeekBar.setProgress(musicService.getCurrentPosition());
-                    musicPlayedDuration.setText(durationFormat.format(musicService.getCurrentPosition()));
-                    handler.sendEmptyMessageDelayed(MSG_FORWARD, ADJUST_UNIT_MILLIS);
+                    int newPosition = musicService.getCurrentPosition() + MILLIS_PER_SECOND * TIME_ADJUST_UNIT;
+                    if(newPosition < playSeekBar.getMax()) {
+                        musicService.seekTo(newPosition);
+                        playSeekBar.setProgress(musicService.getCurrentPosition());
+                        musicPlayedDuration.setText(durationFormat.format(musicService.getCurrentPosition()));
+                        handler.sendEmptyMessageDelayed(MSG_FORWARD, ADJUST_UNIT_MILLIS);
+                    }
                     break;
                 }
                 case MSG_BACKWARD:{
-                    musicService.seekTo(musicService.getCurrentPosition() - MILLIS_PER_SECOND * TIME_ADJUST_UNIT);
-                    musicService.pause();
-                    playSeekBar.setProgress(musicService.getCurrentPosition());
-                    musicPlayedDuration.setText(durationFormat.format(musicService.getCurrentPosition()));
-                    handler.sendEmptyMessageDelayed(MSG_BACKWARD, ADJUST_UNIT_MILLIS);
+                    int newPosition = musicService.getCurrentPosition() - MILLIS_PER_SECOND * TIME_ADJUST_UNIT;
+                    if (newPosition > 0) {
+                        musicService.seekTo(newPosition);
+                        playSeekBar.setProgress(musicService.getCurrentPosition());
+                        musicPlayedDuration.setText(durationFormat.format(musicService.getCurrentPosition()));
+                        handler.sendEmptyMessageDelayed(MSG_BACKWARD, ADJUST_UNIT_MILLIS);
+                    }
                     break;
+                }
+                case MSG_RAISE_VOLUME:{
+                    volumeSeekBar.setProgress(volumeSeekBar.getProgress() + VOLUME_ADJUST_UNIT);
+                    musicService.setVolume(volumeSeekBar.getProgress(), VOLUME_MAX);
+                    handler.sendEmptyMessageDelayed(MSG_RAISE_VOLUME, ADJUST_UNIT_MILLIS);
+                    break;
+                }
+                case MSG_LOWER_VOLUME:{
+                    volumeSeekBar.setProgress(volumeSeekBar.getProgress() - VOLUME_ADJUST_UNIT);
+                    musicService.setVolume(volumeSeekBar.getProgress(), VOLUME_MAX);
+                    handler.sendEmptyMessageDelayed(MSG_LOWER_VOLUME, ADJUST_UNIT_MILLIS);
+                    break;
+
                 }
             }
         }
@@ -130,9 +163,20 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         musicArtist = findViewById(R.id.music_artist);
         musicName = findViewById(R.id.music_name);
         musicCover = findViewById(R.id.music_cover);
+        playButton = findViewById(R.id.playing_play);
+        playModeButton = findViewById(R.id.playing_mode);
 
         playSeekBar.setFocusable(false);
         volumeSeekBar.setFocusable(false);
+
+        playMode = MusicService.LINE;
+        setPlayModeDrawable(playMode);
+
+        audioManager = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
+        if(audioManager != null){
+            int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        }
 
         //todo 主动请求系统扫描新的音频文件
         if(checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED){
@@ -173,12 +217,14 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }else {
             handler.removeMessages(MSG_FORWARD);
             handler.removeMessages(MSG_BACKWARD);
+            handler.removeMessages(MSG_LOWER_VOLUME);
+            handler.removeMessages(MSG_RAISE_VOLUME);
             if(isPlayingBeforeAdjust){
                 Log.d(TAG, "onKeyUp: isPlayingBeforeAdjust true resume");
                 musicService.start();
                 handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
             }
-            isAdjusting = false;
+            isAdjustingPlayer = false;
         }
         return true;
     }
@@ -193,8 +239,21 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
             }
             case KeyEvent.KEYCODE_DPAD_RIGHT:{
                 playForward();
-                Log.d(TAG, "onLongPress: =====> right long press");
                 Log.d(TAG, "onLongPress: right");
+                break;
+            }
+            case KeyEvent.KEYCODE_DPAD_UP:{
+                if(!isAdjustingVolume){
+                    isAdjustingPlayer = true;
+                    handler.sendEmptyMessage(MSG_RAISE_VOLUME);
+                }
+                break;
+            }
+            case KeyEvent.KEYCODE_DPAD_DOWN:{
+                if(!isAdjustingVolume){
+                    isAdjustingPlayer = true;
+                    handler.sendEmptyMessage(MSG_LOWER_VOLUME);
+                }
                 break;
             }
             case KeyEvent.KEYCODE_DPAD_CENTER:{
@@ -208,54 +267,62 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         Log.d(TAG, "onShortPress: short press");
         switch (keyCode){
             case KeyEvent.KEYCODE_DPAD_LEFT:{
-                int index = musicService.skipToNextSong();
-                updateSongInfoUI(index);
+                rollbackToPreviousSong();
                 Log.d(TAG, "onShortPress: left");
                 break;
             }
             case KeyEvent.KEYCODE_DPAD_RIGHT:{
-                int index = musicService.rollbackToPreviousSong();
-                updateSongInfoUI(index);
+                skipToNextSong();
                 Log.d(TAG, "onShortPress: right");
                 break;
             }
             case KeyEvent.KEYCODE_DPAD_UP:{
                 Log.d(TAG, "onShortPress: up");
+                volumeSeekBar.setProgress(volumeSeekBar.getProgress() + VOLUME_ADJUST_UNIT);
+                musicService.setVolume(volumeSeekBar.getProgress(), VOLUME_MAX);
                 break;
             }
             case KeyEvent.KEYCODE_DPAD_DOWN:{
                 Log.d(TAG, "onShortPress: down");
+                volumeSeekBar.setProgress(volumeSeekBar.getProgress() - VOLUME_ADJUST_UNIT);
+                musicService.setVolume(volumeSeekBar.getProgress(), VOLUME_MAX);
                 break;
             }
             case KeyEvent.KEYCODE_DPAD_CENTER:{
                 Log.d(TAG, "onShortPress: center");
                 if(musicService.isPlaying()){
-                    musicService.pause();
+                    pause();
                 }else {
-                    musicService.start();
+                    start();
                 }
                 handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
+                break;
+            }
+            case KeyEvent.KEYCODE_TAB:{
+                Log.d(TAG, "onLongPress: tab");
+                playMode = ++playMode % MusicService.PLAY_MODE_SUM;
+                musicService.setPlayMode(playMode);
+                setPlayModeDrawable(playMode);
                 break;
             }
         }
     }
 
     private void playForward(){
-        if(isAdjusting)
+        if(isAdjustingPlayer)
             return;
-        isAdjusting = true;
+        isAdjustingPlayer = true;
         isPlayingBeforeAdjust = musicService.isPlaying();
         if (isPlayingBeforeAdjust) {
-            Log.d(TAG, "playForward: =====> paused");
             musicService.pause();
         }
         handler.sendEmptyMessage(MSG_FORWARD);
     }
 
     private void playBackward(){
-        if(isAdjusting)
+        if(isAdjustingPlayer)
             return;
-        isAdjusting = true;
+        isAdjustingPlayer = true;
         isPlayingBeforeAdjust = musicService.isPlaying();
         if(isPlayingBeforeAdjust) {
             musicService.pause();
@@ -285,7 +352,61 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         return musicAttributes;
     }
 
+    private void initPlay(){
+        musicService.initPlay();
+        playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
+        handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
+        Message message = handler.obtainMessage();
+        message.arg1 = 0;
+        message.what = MSG_UPDATE_SONG_INFO;
+        handler.sendMessage(message);
+    }
+
+    private void pause(){
+        musicService.pause();
+        playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_play));
+    }
+
+    private void start(){
+        musicService.start();
+        playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
+    }
+
+    private void skipToNextSong(){
+        int index = musicService.skipToNextSong();
+        updateSongInfoUI(index);
+        playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
+    }
+
+    private void rollbackToPreviousSong(){
+        int index = musicService.rollbackToPreviousSong();
+        updateSongInfoUI(index);
+        playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
+    }
+
+    private void setPlayModeDrawable(int playMode){
+        switch (playMode){
+            case MusicService.LINE:{
+                playModeButton.setImageDrawable(getDrawable(R.drawable.ic_playlist_play_black));
+                break;
+            }
+            case MusicService.RADOM:{
+                playModeButton.setImageDrawable(getDrawable(R.drawable.ic_shuffle_black));
+                break;
+            }
+            case MusicService.SINGLE_RECICLE:{
+                playModeButton.setImageDrawable(getDrawable(R.drawable.play_icn_one_prs));
+                break;
+            }
+            case MusicService.MENU_RECICLE:{
+                playModeButton.setImageDrawable(getDrawable(R.drawable.play_icn_loop_prs));
+                break;
+            }
+        }
+    }
+
     public void updateSongInfoUI(int songIndex){
+        handler.removeMessages(MSG_UPDATE_SEEK_BAR);
         playSeekBar.setProgress(0);
         MusicAttribute musicAttribute = musicAttributeList.get(songIndex);
         playSeekBar.setMax(musicAttribute.duration);
@@ -294,6 +415,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         musicCover.setImageDrawable(getDrawable(R.drawable.default_music_cover));
         musicName.setText(musicAttribute.name);
         musicArtist.setText(musicAttribute.artist);
+        handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
     }
 
     @Override

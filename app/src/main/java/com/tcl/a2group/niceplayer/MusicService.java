@@ -25,50 +25,52 @@ public class MusicService extends Service {
 
     public MediaPlayer mediaPlayer;
     public boolean tag = false;
-    //列表循环
-    public static final int MENU_RECICLE = 0;
+
+    //顺序播放
+    public static final int LINE = 0;
     //随机播放
     public static final int RADOM = 1;
     //单曲循环
     public static final int SINGLE_RECICLE = 2;
-    //顺序播放
-    public static final int LINE = 3;
+    //列表循环
+    public static final int MENU_RECICLE = 3;
+    public static final int PLAY_MODE_SUM = 4;
     //播放下一首
     public static final int OPER_NEXT = 1;
     //播放上一首
     public static final int OPER_PREVIOUS=-1;
     //保存当前播放模式
-    public int MODE = MENU_RECICLE;
+    public int playMode = LINE;
     //用于显示播放列表的数据源
     private List<Map<String,Object>> musicList=new ArrayList<>();
     //当前播放的歌曲索引
     private int currIndex=-1;
-    //获取歌曲列表
-    public List<Map<String,Object>> refeshMusicList(String musicUrl){
-        File musicDir=new File(musicUrl);
-        if(musicDir!=null&&musicDir.isDirectory()){
-            File[] musicFile=musicDir.listFiles(new MusicFilter());
-            if(musicFile!=null){
-                musicList=new ArrayList<Map<String,Object>>();
-                for(int i=0;i<musicFile.length;i++){
-                    File currMusic=musicFile[i];
-                    //获取当前目录的名称和绝对路径
-                    String abPath=currMusic.getAbsolutePath();
-                    String musicName=currMusic.getName();
-                    Map<String,Object> currMusicMap=new HashMap<>();
-                    currMusicMap.put("musicName", musicName);
-                    currMusicMap.put("musicAbPath", abPath);
-                    musicList.add(currMusicMap);
-                }
-
-            }else{
-                musicList = new ArrayList<Map<String,Object>>();
-            }
-        }else{
-            musicList = new ArrayList<Map<String,Object>>();
-        }
-        return musicList;
-    }
+//    //获取歌曲列表
+//    public List<Map<String,Object>> refeshMusicList(String musicUrl){
+//        File musicDir=new File(musicUrl);
+//        if(musicDir!=null&&musicDir.isDirectory()){
+//            File[] musicFile=musicDir.listFiles(new MusicFilter());
+//            if(musicFile!=null){
+//                musicList=new ArrayList<Map<String,Object>>();
+//                for(int i=0;i<musicFile.length;i++){
+//                    File currMusic=musicFile[i];
+//                    //获取当前目录的名称和绝对路径
+//                    String abPath=currMusic.getAbsolutePath();
+//                    String musicName=currMusic.getName();
+//                    Map<String,Object> currMusicMap=new HashMap<>();
+//                    currMusicMap.put("musicName", musicName);
+//                    currMusicMap.put("musicAbPath", abPath);
+//                    musicList.add(currMusicMap);
+//                }
+//
+//            }else{
+//                musicList = new ArrayList<Map<String,Object>>();
+//            }
+//        }else{
+//            musicList = new ArrayList<Map<String,Object>>();
+//        }
+//        return musicList;
+//    }
 
     private List<PlayActivity.MusicAttribute> musicAttributeList;
     private OnPlayCompletedListener onPlayCompletedListener;
@@ -86,67 +88,68 @@ public class MusicService extends Service {
 //        currIndex=musicPo;
 //    }
 
-    //按照播放模式播放音乐
-    public void playNew(int operCode) throws IllegalArgumentException, SecurityException, IllegalStateException, IOException{
-        File externalMusicDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC);
-        if(externalMusicDir != null)
-            musicList = refeshMusicList(externalMusicDir.getAbsolutePath());
-        else return;
-        for(Map<String,Object> m:musicList){
-            Log.i("i",m.get("musicName").toString());
-        }
-        if(musicList.size()>0){
-            Log.i("i",""+MODE);
-            switch(MODE){
-                case MENU_RECICLE:
-                    int newIndex=0;
-                    switch(operCode){
-                        case OPER_NEXT:
-                            newIndex=currIndex+1;
-                            if(newIndex>=musicList.size()){
-                                newIndex=0;
-                            }
-                            break;
-                        case OPER_PREVIOUS:
-                            newIndex=currIndex-1;
-                            if(newIndex<0){
-                                newIndex=musicList.size()-1;
-                            }
-                            break;
-                    }
-                    playMusic(newIndex);
-                    break;
-                case SINGLE_RECICLE:
-                    Log.i("88  ",currIndex+"");
-                    playMusic(currIndex);
-                    break;
-                case RADOM:
-                    Random rd=new Random();
-                    int randomIndex=rd.nextInt(musicList.size());
-                    playMusic(randomIndex);
-                    break;
-                case LINE:
-                    newIndex=0;
-                    switch(operCode){
-                        case OPER_NEXT:
-                            newIndex=currIndex+1;
-                            if(newIndex>=musicList.size()){
-                                newIndex=0;
-                            }
-                            break;
-                        case OPER_PREVIOUS:
-                            newIndex=currIndex-1;
-                            if(newIndex<0){
-                                newIndex=musicList.size()-1;
-                            }
-                            break;
-                    }
-                    playMusic(newIndex);
-                    break;
+//    //按照播放模式播放音乐
+//    public void playNew(int operCode) throws IllegalArgumentException, SecurityException, IllegalStateException, IOException{
+//        File externalMusicDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC);
+//        if(externalMusicDir != null)
+//            musicList = refeshMusicList(externalMusicDir.getAbsolutePath());
+//        else return;
+//        for(Map<String,Object> m:musicList){
+//            Log.i("i",m.get("musicName").toString());
+//        }
+//        if(musicList.size()>0){
+//            Log.i("i",""+ playMode);
+//            switch(playMode){
+//                case MENU_RECICLE:
+//                    int newIndex=0;
+//                    switch(operCode){
+//                        case OPER_NEXT:
+//                            newIndex=currIndex+1;
+//                            if(newIndex>=musicList.size()){
+//                                newIndex=0;
+//                            }
+//                            break;
+//                        case OPER_PREVIOUS:
+//                            newIndex=currIndex-1;
+//                            if(newIndex<0){
+//                                newIndex=musicList.size()-1;
+//                            }
+//                            break;
+//                    }
+//                    playMusic(newIndex);
+//                    break;
+//                case SINGLE_RECICLE:
+//                    Log.i("88  ",currIndex+"");
+//                    playMusic(currIndex);
+//                    break;
+//                case RADOM:
+//                    Random rd=new Random();
+//                    int randomIndex=rd.nextInt(musicList.size());
+//                    playMusic(randomIndex);
+//                    break;
+//                case LINE:
+//                    newIndex=0;
+//                    switch(operCode){
+//                        case OPER_NEXT:
+//                            newIndex=currIndex+1;
+//                            if(newIndex>=musicList.size()){
+//                                newIndex=0;
+//                            }
+//                            break;
+//                        case OPER_PREVIOUS:
+//                            newIndex=currIndex-1;
+//                            if(newIndex<0){
+//                                newIndex=musicList.size()-1;
+//                            }
+//                            break;
+//                    }
+//                    playMusic(newIndex);
+//                    break;
+//
+//            }
+//        }
+//    }
 
-            }
-        }
-    }
     //构造函数
     public MusicService() {
         mediaPlayer = new MediaPlayer();
@@ -154,7 +157,7 @@ public class MusicService extends Service {
         mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
             @Override
             public void onCompletion(MediaPlayer mp) {
-                mp.stop();
+                Log.d(TAG, "onCompletion: music playing completion");
                 int index = moveToNextSong();
                 if(onPlayCompletedListener != null){
                     onPlayCompletedListener.onPlayCompleted(index);
@@ -220,7 +223,7 @@ public class MusicService extends Service {
 
     private int getNextSongIndex(){
         int index = INDEX_ERROR;
-        switch (MODE){
+        switch (playMode){
             //todo 用户主动切歌
             case MENU_RECICLE:{
                 index = currIndex + 1;
@@ -270,12 +273,12 @@ public class MusicService extends Service {
     }
 
     public void initPlay(){
-        File externalMusicDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC);
-        if(externalMusicDir != null)
-            musicList = refeshMusicList(externalMusicDir.getAbsolutePath());
-        else return;
-        if(musicList.isEmpty())
-            return;
+//        File externalMusicDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC);
+//        if(externalMusicDir != null)
+//            musicList = refeshMusicList(externalMusicDir.getAbsolutePath());
+//        else return;
+//        if(musicList.isEmpty())
+//            return;
 
         if(musicAttributeList == null || musicAttributeList.isEmpty()){
             return;
@@ -328,6 +331,17 @@ public class MusicService extends Service {
 
     public void setOnPlayCompletedListener(OnPlayCompletedListener onPlayCompletedListener){
         this.onPlayCompletedListener = onPlayCompletedListener;
+    }
+
+    public void setVolume(int volume, int maxVolume){
+        if(mediaPlayer != null){
+            float scaleVolume = ((float)volume / maxVolume);
+            mediaPlayer.setVolume(scaleVolume, scaleVolume);
+        }
+    }
+
+    public void setPlayMode(int playMode){
+        this.playMode = playMode;
     }
 
     @Override
