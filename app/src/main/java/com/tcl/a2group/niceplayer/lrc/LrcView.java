@@ -14,7 +14,7 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.widget.Scroller;
 
-import com.tcl.a2group.niceplayer.PlayActivity;
+import com.tcl.a2group.niceplayer.activity.PlayActivity;
 import com.tcl.a2group.niceplayer.util.CommonUtils;
 import com.tcl.a2group.niceplayer.R;
 

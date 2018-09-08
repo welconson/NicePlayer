@@ -1,4 +1,4 @@
-package com.tcl.a2group.niceplayer;
+package com.tcl.a2group.niceplayer.activity;
 
 import android.Manifest;
 import android.app.Activity;
@@ -11,6 +11,8 @@ import android.os.Environment;
 import android.support.annotation.NonNull;
 import android.util.Log;
 import android.widget.Toast;
+
+import com.tcl.a2group.niceplayer.R;
 
 import java.io.File;
 import java.util.Timer;

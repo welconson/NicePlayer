@@ -1,15 +1,12 @@
-package com.tcl.a2group.niceplayer;
+package com.tcl.a2group.niceplayer.activity;
 
-import android.Manifest;
 import android.app.Service;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.AudioManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -17,11 +14,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.provider.MediaStore;
-import android.support.annotation.NonNull;
+import android.support.v4.app.Fragment;
 import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
-import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
@@ -31,14 +25,23 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.tcl.a2group.niceplayer.service.MusicService;
+import com.tcl.a2group.niceplayer.R;
+import com.tcl.a2group.niceplayer.entity.MusicAttribute;
+import com.tcl.a2group.niceplayer.fragment.PlayListFragment;
+
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
 
-public class PlayActivity extends AppCompatActivity implements MusicService.OnPlayCompletedListener{
-    public static Context context;
+/**
+ * 播放界面Activity
+ * 管理播放界面的用户交互，协调后台的播放Service，承载列表Fragment的显示
+ */
+public class PlayActivity extends AppCompatActivity implements MusicService.OnPlayCompletedListener {
     private final static String TAG = "PlayActivity";
     private final static int REPEAT_COUNT_THRESHOLD = 10;
+    // 消息常量，对应Handler处理的消息
     private final static int MSG_FORWARD = 10;
     private final static int MSG_BACKWARD = 11;
     private final static int MSG_UPDATE_SEEK_BAR = 1;
@@ -46,40 +49,70 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
     private final static int MSG_RAISE_VOLUME = 3;
     private final static int MSG_LOWER_VOLUME = 4;
 
+    // 每秒的毫秒数
     private final static int MILLIS_PER_SECOND = 1000;
-    private final static int TIME_ADJUST_UNIT = 1;
-    private final static int ADJUST_UNIT_MILLIS = 10;
+    // 播放进度条每次调整的单位(/s)
+    private final static int PLAY_BAR_ADJUST_UNIT = 1;
+    // Handler消息的间隔毫秒数
+    private final static int MSG_INTERVAL_MILLIS = 10;
+    // 音量最大值
     private final static int VOLUME_MAX = 100;
+    // 音量中值
     private final static int VOLUME_MIDDLE = 50;
+    // 音量调整单位
     private final static int VOLUME_ADJUST_UNIT = 1;
 
 
-    private Toolbar toolbar;
-//    private AlbumViewPager viewPager;
+    public static Context context;
+    // private AlbumViewPager viewPager;
     private RelativeLayout lrcViewContainer;
     private TextView musicPlayedDuration, musicDuration, musicName, musicArtist;
     private ImageView musicCover, playButton, playModeButton;
     private SeekBar playSeekBar, volumeSeekBar;
-    private RecyclerView playListView;
+    // 记录快进或快退前的播放状态
     private boolean isPlayingBeforeAdjust = false;
-    private boolean isAdjustingPlayer = false;
+    // 是否正在快进或快退
+    private boolean isAdjustingPlayedSeekBar = false;
+    // 是否正在长按调整音量
     private boolean isAdjustingVolume = false;
+    // 音乐信息列表
     private List<MusicAttribute> musicAttributeList;
+    // 音量管理实例，获取系统音量
     private AudioManager audioManager;
+    // 记录当前的播放模式
     private int playMode;
+    // 当前播放的歌曲index
+    private int playingIndex = MusicService.INDEX_END;
+    // 播放列表是否已显示
+    private boolean isPlayListShowed;
+    // 播放列表中焦点选中的index
+    private int focusedIndex;
+    // 显示播放列表的Fragment
+    private PlayListFragment playListFragment;
+    // 是否已经按下返回键
+    private boolean isBackPressed;
+    // 返回键按下的时间
+    private long backPressedTime;
+    // 按键次数统计，用于在触发onKeyUp回调时，判断是否为长按操作
+    private int keyCount;
 
+    // 后台播放服务
     private MusicService musicService;
+
     private SimpleDateFormat durationFormat = new SimpleDateFormat("mm:ss");
 
-    // 绑定服务的连接类
+    // 绑定服务的连接类，实现连接建立、断开时的回调
     private ServiceConnection connection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
+            // 获取后台服务实例，自动播放第一首歌
             musicService = ((MusicService.MyBinder) (service)).getService();
             musicService.setMusicAttributeList(musicAttributeList);
             musicService.setPlayMode(playMode);
             initPlay();
+            // 设置后台服务自然播放结束的事件监听接口
             musicService.setOnPlayCompletedListener(PlayActivity.this);
+            // 根据当前播放音量设置当前的音量显示
             volumeSeekBar.setMax(VOLUME_MAX);
             //todo volumeSeekBar的显示控制
             volumeSeekBar.setVisibility(View.VISIBLE);
@@ -92,10 +125,6 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
                 volumeSeekBar.setProgress(VOLUME_MIDDLE);
                 musicService.setVolume(VOLUME_MIDDLE, VOLUME_MAX);
             }
-//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-//                playListView.setDefaultFocusHighlightEnabled(true);
-//            }
-//            Log.d(TAG, "onServiceConnected: recycler view has" + (playListView.requestFocus() ? "" : " not") + " got focused");
         }
 
         @Override
@@ -104,53 +133,58 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }
     };
 
-    // 主要用于处理长按操作，更新UI
+    // 重写Handler的消息处理方法，主要用于处理长按操作，更新UI
     // 大多数消息发送者本身运行在UI线程
     private Handler handler = new Handler(Looper.getMainLooper()){
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
+                // 更新播放进度条的消息处理，每次刷新进度条后，会发送下一次更新的延时消息
                 case MSG_UPDATE_SEEK_BAR:{
                     playSeekBar.setProgress(musicService.getCurrentPosition());
                     musicPlayedDuration.setText(durationFormat.format(musicService.getCurrentPosition()));
                     handler.sendEmptyMessageDelayed(MSG_UPDATE_SEEK_BAR, MILLIS_PER_SECOND);
                     break;
                 }
+                // 更新歌曲信息的消息处理，更换播放歌曲时调用，传入新播放歌曲在列表的index
                 case MSG_UPDATE_SONG_INFO:{
                     updateSongInfoUI(msg.arg1);
                     break;
                 }
+                // 快进消息处理，处理完成同样发送下一次更新的延时消息
                 case MSG_FORWARD: {
-                    Log.d(TAG, "handleMessage: =====> msg forward");
-                    int newPosition = musicService.getCurrentPosition() + MILLIS_PER_SECOND * TIME_ADJUST_UNIT;
+                    int newPosition = musicService.getCurrentPosition() + MILLIS_PER_SECOND * PLAY_BAR_ADJUST_UNIT;
                     if(newPosition < playSeekBar.getMax()) {
                         musicService.seekTo(newPosition);
                         playSeekBar.setProgress(musicService.getCurrentPosition());
                         musicPlayedDuration.setText(durationFormat.format(musicService.getCurrentPosition()));
-                        handler.sendEmptyMessageDelayed(MSG_FORWARD, ADJUST_UNIT_MILLIS);
+                        handler.sendEmptyMessageDelayed(MSG_FORWARD, MSG_INTERVAL_MILLIS);
                     }
                     break;
                 }
+                // 快退消息处理，同上
                 case MSG_BACKWARD:{
-                    int newPosition = musicService.getCurrentPosition() - MILLIS_PER_SECOND * TIME_ADJUST_UNIT;
+                    int newPosition = musicService.getCurrentPosition() - MILLIS_PER_SECOND * PLAY_BAR_ADJUST_UNIT;
                     if (newPosition > 0) {
                         musicService.seekTo(newPosition);
                         playSeekBar.setProgress(musicService.getCurrentPosition());
                         musicPlayedDuration.setText(durationFormat.format(musicService.getCurrentPosition()));
-                        handler.sendEmptyMessageDelayed(MSG_BACKWARD, ADJUST_UNIT_MILLIS);
+                        handler.sendEmptyMessageDelayed(MSG_BACKWARD, MSG_INTERVAL_MILLIS);
                     }
                     break;
                 }
+                // 音量加长按消息处理，同上
                 case MSG_RAISE_VOLUME:{
                     volumeSeekBar.setProgress(volumeSeekBar.getProgress() + VOLUME_ADJUST_UNIT);
                     musicService.setVolume(volumeSeekBar.getProgress(), VOLUME_MAX);
-                    handler.sendEmptyMessageDelayed(MSG_RAISE_VOLUME, ADJUST_UNIT_MILLIS);
+                    handler.sendEmptyMessageDelayed(MSG_RAISE_VOLUME, MSG_INTERVAL_MILLIS);
                     break;
                 }
+                // 音量减长按消息处理，同上
                 case MSG_LOWER_VOLUME:{
                     volumeSeekBar.setProgress(volumeSeekBar.getProgress() - VOLUME_ADJUST_UNIT);
                     musicService.setVolume(volumeSeekBar.getProgress(), VOLUME_MAX);
-                    handler.sendEmptyMessageDelayed(MSG_LOWER_VOLUME, ADJUST_UNIT_MILLIS);
+                    handler.sendEmptyMessageDelayed(MSG_LOWER_VOLUME, MSG_INTERVAL_MILLIS);
                     break;
 
                 }
@@ -158,18 +192,15 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }
     };
 
-    // 按键次数统计，用于在触发onKeyUp回调时，判断是否为长按操作
-    private int keyCount;
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        context = this;
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_play);
         bindService(new Intent(this, MusicService.class), connection, Service.BIND_AUTO_CREATE);
 
         Log.d(TAG, "onCreate: external music dir: " + getExternalFilesDir(Environment.DIRECTORY_MUSIC));
 
+        context = this;
 //        viewPager = findViewById(R.id.view_pager);
         lrcViewContainer = findViewById(R.id.lrcViewContainer);
         musicPlayedDuration = findViewById(R.id.music_duration_played);
@@ -181,12 +212,11 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         musicCover = findViewById(R.id.music_cover);
         playButton = findViewById(R.id.playing_play);
         playModeButton = findViewById(R.id.playing_mode);
-        playListView = findViewById(R.id.play_list_view);
 
         playSeekBar.setFocusable(false);
         volumeSeekBar.setFocusable(false);
 
-        playMode = MusicService.LINE;
+        playMode = MusicService.MODE_ORDER;
         setPlayModeDrawable(playMode);
 
         audioManager = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
@@ -196,15 +226,21 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         }
 
         musicAttributeList = getMusicList();
-        playListView.setLayoutManager(new LinearLayoutManager(this));
-        playListView.setAdapter(new PlayListAdapter(musicAttributeList, this));
+
+        isPlayListShowed = false;
+        isBackPressed = false;
     }
 
     // 按键按下时的处理，按键按下次数统计，达到阈值则触发长按响应
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        Log.d(TAG, "onKeyDown: down keyCount: " + event.getRepeatCount());
+//        Log.d(TAG, "onKeyDown: down keyCount: " + event.getRepeatCount());
         keyCount = event.getRepeatCount();
+
+        // 焦点在播放列表时，拦截按键事件
+        if(isPlayListShowed){
+            return super.onKeyDown(keyCode, event);
+        }
         if(keyCount > REPEAT_COUNT_THRESHOLD){
             onLongPress(keyCode);
         }
@@ -214,16 +250,87 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
     // 按键松开时的处理，判断是否需要取消长按处理
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        Log.d(TAG, "onKeyUp: up");
-        /*if(playListView.isFocused()){
-            // 列表获取焦点时的按键响应
-            Log.d(TAG, "onKeyUp: playListView is focused");
-            if(keyCode == KeyEvent.KEYCODE_DPAD_LEFT){
-                playListView.clearFocus();
-                playListView.setFocusable(false);
+//        Log.d(TAG, "onKeyUp: up");
+
+        // 定义退出键时的行为
+        if(keyCode == KeyEvent.KEYCODE_BACK){
+            if (!isBackPressed) {
+                isBackPressed = true;
+                Toast.makeText(PlayActivity.this, "再按一次退出", Toast.LENGTH_SHORT).show();
+                backPressedTime = System.currentTimeMillis();
+                return false;
+            }else {
+                long secondBackPressedTime = System.currentTimeMillis();
+                if(secondBackPressedTime - backPressedTime < 3000){
+                    handler.removeMessages(MSG_UPDATE_SEEK_BAR);
+                    musicService.prepareForUnbind();
+                    unbindService(connection);
+                    finish();
+                }else {
+                    Toast.makeText(PlayActivity.this, "再按一次退出", Toast.LENGTH_SHORT).show();
+                    backPressedTime = secondBackPressedTime;
+                }
             }
         }
-        else */if(keyCount <= REPEAT_COUNT_THRESHOLD){
+
+        // 任意按键时间都会取消已经记录的后退按键事件
+        isBackPressed = false;
+
+        // 按键事件，焦点进入播放列表
+        if(!isPlayListShowed && keyCode == KeyEvent.KEYCODE_A){
+            isPlayListShowed = true;
+            focusedIndex = playingIndex;
+            Log.d(TAG, "onKeyUp: focus enter play list");
+            playListFragment = new PlayListFragment();
+            getSupportFragmentManager().beginTransaction()
+                    .add(R.id.play_list_fragment, playListFragment, "play_list_fragment")
+                    .commit();
+            return false;
+        }
+
+        // 焦点在播放列表时，拦截按键事件
+        if(isPlayListShowed){
+            switch (keyCode){
+                case KeyEvent.KEYCODE_DPAD_UP:{
+                    if(focusedIndex != MusicService.INDEX_START){
+                        focusedIndex = focusedIndex - 1;
+//                        playListManager.setFocusOnIndex(focusedIndex);
+                    }
+                    Log.d(TAG, "onKeyUp: UP, focus index " + focusedIndex);
+                    break;
+                }
+                case KeyEvent.KEYCODE_DPAD_DOWN:{
+                    if(focusedIndex < musicAttributeList.size() - 1){
+                        focusedIndex = focusedIndex + 1;
+//                        playListManager.setFocusOnIndex(focusedIndex);
+                    }
+                    Log.d(TAG, "onKeyUp: DOWN, focus index " + focusedIndex);
+                    break;
+                }
+                case KeyEvent.KEYCODE_DPAD_CENTER:{
+                    playingIndex = playListFragment.getFocusItemIndex();
+                    musicService.moveToSongByIndex(playingIndex);
+                    updateSongInfoUI(playingIndex);
+                    playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
+                    break;
+                }
+                case KeyEvent.KEYCODE_A:{
+                    isPlayListShowed = false;
+                    Fragment fragment = getSupportFragmentManager().findFragmentByTag("play_list_fragment");
+                    if (fragment != null) {
+                        getSupportFragmentManager()
+                                .beginTransaction()
+                                .remove(fragment)
+                                .commit();
+                    }
+                    break;
+                }
+            }
+            return false;
+        }
+
+        //
+        if(keyCount <= REPEAT_COUNT_THRESHOLD){
             onShortPress(keyCode);
             keyCount = 0;
         }else {
@@ -236,7 +343,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
                 musicService.start();
                 handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
             }
-            isAdjustingPlayer = false;
+            isAdjustingPlayedSeekBar = false;
         }
         return true;
     }
@@ -257,14 +364,14 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
             }
             case KeyEvent.KEYCODE_DPAD_UP:{
                 if(!isAdjustingVolume){
-                    isAdjustingPlayer = true;
+                    isAdjustingPlayedSeekBar = true;
                     handler.sendEmptyMessage(MSG_RAISE_VOLUME);
                 }
                 break;
             }
             case KeyEvent.KEYCODE_DPAD_DOWN:{
                 if(!isAdjustingVolume){
-                    isAdjustingPlayer = true;
+                    isAdjustingPlayedSeekBar = true;
                     handler.sendEmptyMessage(MSG_LOWER_VOLUME);
                 }
                 break;
@@ -314,7 +421,7 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
             }
             case KeyEvent.KEYCODE_TAB:{
                 Log.d(TAG, "onLongPress: tab");
-                playMode = ++playMode % MusicService.PLAY_MODE_SUM;
+                playMode = ++playMode % MusicService.MODE_COUNT;
                 musicService.setPlayMode(playMode);
                 setPlayModeDrawable(playMode);
                 break;
@@ -324,9 +431,9 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
 
     // 快进处理
     private void playForward(){
-        if(isAdjustingPlayer)
+        if(isAdjustingPlayedSeekBar)
             return;
-        isAdjustingPlayer = true;
+        isAdjustingPlayedSeekBar = true;
         isPlayingBeforeAdjust = musicService.isPlaying();
         if (isPlayingBeforeAdjust) {
             musicService.pause();
@@ -336,9 +443,9 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
 
     // 快退处理
     private void playBackward(){
-        if(isAdjustingPlayer)
+        if(isAdjustingPlayedSeekBar)
             return;
-        isAdjustingPlayer = true;
+        isAdjustingPlayedSeekBar = true;
         isPlayingBeforeAdjust = musicService.isPlaying();
         if(isPlayingBeforeAdjust) {
             musicService.pause();
@@ -353,14 +460,14 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         if (cursor != null) {
             while (cursor.moveToNext()){
                 MusicAttribute musicAttribute = new MusicAttribute();
-                musicAttribute.path = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA));
-                Log.d(TAG, "getMusicList: music path: " + musicAttribute.path);
-                musicAttribute.name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)); // 歌曲名
-                musicAttribute.album = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)); // 专辑
-                musicAttribute.artist = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)); // 作者
-                musicAttribute.size = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE));// 大小
-                musicAttribute.duration = cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION));// 时长
-                musicAttribute.musicId = cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID));// 歌曲的id
+                musicAttribute.setPath(cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)));
+                Log.d(TAG, "getMusicList: music path: " + musicAttribute.getPath());
+                musicAttribute.setName(cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME))); // 歌曲名
+                musicAttribute.setAlbum(cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM))); // 专辑
+                musicAttribute.setArtist(cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST))); // 作者
+                musicAttribute.setSize(cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)));// 大小
+                musicAttribute.setDuration(cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)));// 时长
+                musicAttribute.setMusicId(cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)));// 歌曲的id
 //                int albumId = cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID));
                 musicAttributes.add(musicAttribute);
             }
@@ -374,8 +481,9 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         musicService.initPlay();
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
         handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
+        playingIndex = MusicService.INDEX_START;
         Message message = handler.obtainMessage();
-        message.arg1 = 0;
+        message.arg1 = playingIndex;
         message.what = MSG_UPDATE_SONG_INFO;
         handler.sendMessage(message);
     }
@@ -388,40 +496,49 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
 
     // 开始播放，同时更新UI
     private void start(){
-        musicService.start();
-        playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
+        if(playingIndex == MusicService.INDEX_END){
+            playingIndex = MusicService.INDEX_START;
+            Message message = handler.obtainMessage();
+            message.arg1 = playingIndex;
+            message.what = MSG_UPDATE_SONG_INFO;
+            handler.sendMessage(message);
+        }
+        else {
+            musicService.start();
+            playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
+        }
     }
 
     // 播放下一首，同时更新UI
     private void skipToNextSong(){
-        int index = musicService.skipToNextSong();
-        updateSongInfoUI(index);
+        playingIndex = musicService.skipToNextSong();
+        updateSongInfoUI(playingIndex);
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
     }
 
     // 播放上一首，同时更新UI
     private void rollbackToPreviousSong(){
-        int index = musicService.rollbackToPreviousSong();
-        updateSongInfoUI(index);
+        playingIndex = musicService.rollbackToPreviousSong();
+        updateSongInfoUI(playingIndex);
         playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_pause));
     }
 
     // 设置播放模式，同时更新UI
     private void setPlayModeDrawable(int playMode){
         switch (playMode){
-            case MusicService.LINE:{
+            case MusicService.MODE_ORDER:{
                 playModeButton.setImageDrawable(getDrawable(R.drawable.ic_playlist_play_black));
                 break;
             }
-            case MusicService.RADOM:{
+            case MusicService.MODE_RANDOM:{
                 playModeButton.setImageDrawable(getDrawable(R.drawable.ic_shuffle_black));
                 break;
             }
-            case MusicService.SINGLE_RECICLE:{
+            case MusicService.MODE_SINGLE:{
                 playModeButton.setImageDrawable(getDrawable(R.drawable.play_icn_one_prs));
                 break;
             }
-            case MusicService.MENU_RECICLE:{
+            case MusicService.MODE_LIST_REPEAT:{
                 playModeButton.setImageDrawable(getDrawable(R.drawable.play_icn_loop_prs));
                 break;
             }
@@ -432,14 +549,22 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
     public void updateSongInfoUI(int songIndex){
         handler.removeMessages(MSG_UPDATE_SEEK_BAR);
         playSeekBar.setProgress(0);
-        MusicAttribute musicAttribute = musicAttributeList.get(songIndex);
-        playSeekBar.setMax(musicAttribute.duration);
-        musicPlayedDuration.setText(durationFormat.format(0));
-        musicDuration.setText(durationFormat.format(musicAttribute.duration));
-        musicCover.setImageDrawable(getDrawable(R.drawable.default_music_cover));
-        musicName.setText(musicAttribute.name);
-        musicArtist.setText(musicAttribute.artist);
-        handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
+        if (songIndex == MusicService.INDEX_END) {
+            handler.removeMessages(MSG_UPDATE_SEEK_BAR);
+            playSeekBar.setProgress(0);
+            playButton.setImageDrawable(getDrawable(R.drawable.play_rdi_btn_play));
+            musicPlayedDuration.setText(durationFormat.format(0));
+        }else {
+            MusicAttribute musicAttribute = musicAttributeList.get(songIndex);
+            playSeekBar.setProgress(0);
+            playSeekBar.setMax(musicAttribute.getDuration());
+            musicPlayedDuration.setText(durationFormat.format(0));
+            musicDuration.setText(durationFormat.format(musicAttribute.getDuration()));
+            musicCover.setImageDrawable(getDrawable(R.drawable.default_music_cover));
+            musicName.setText(musicAttribute.getName());
+            musicArtist.setText(musicAttribute.getArtist());
+            handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
+        }
     }
 
     @Override
@@ -450,14 +575,22 @@ public class PlayActivity extends AppCompatActivity implements MusicService.OnPl
         handler.sendMessage(message);
     }
 
-    // 歌曲信息
-    public class MusicAttribute{
-        String path;
-        String name;
-        String album;
-        String artist;
-        long size;
-        int duration;
-        int musicId;
+    @Override
+    protected void onResume() {
+        Log.d(TAG, "onResume: ");
+        if(musicService != null) {
+            Message message = handler.obtainMessage();
+            message.arg1 = musicService.getPlayingIndex();
+            if (message.arg1 != MusicService.INDEX_END) {
+                handler.sendEmptyMessage(MSG_UPDATE_SEEK_BAR);
+            }
+            message.what = MSG_UPDATE_SONG_INFO;
+            handler.sendMessage(message);
+        }
+        super.onResume();
+    }
+
+    public List<MusicAttribute> getMusicAttributeList() {
+        return musicAttributeList;
     }
 }

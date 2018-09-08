@@ -25,13 +25,10 @@ import android.provider.MediaStore;
 import android.util.TypedValue;
 
 //import com.sun.mail.smtp.SMTPMessage;
-import com.tcl.a2group.niceplayer.PlayActivity;
+import com.tcl.a2group.niceplayer.activity.PlayActivity;
 import com.tcl.a2group.niceplayer.R;
 
-import java.io.IOException;
 import java.lang.reflect.Method;
-import java.util.Date;
-import java.util.Properties;
 import java.util.UUID;
 
 //import javax.mail.Address;
